@@ -29,6 +29,7 @@ import datetime
 import warnings
 import wave
 import struct 
+import demoji
 
 # Suppress harmless library warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
@@ -42,9 +43,10 @@ import scipy.signal
 import openwakeword
 from openwakeword.model import Model
 import ollama 
+from faster_whisper import WhisperModel
 
 # --- WEB SEARCH (Using your working import) ---
-from ddgs import DDGS 
+from duckduckgo_search import DDGS 
 
 # =========================================================================
 # 1. CONFIGURATION & CONSTANTS
@@ -121,9 +123,6 @@ You: Hi! I am ready to help!
 User: Search for news about robots.
 You: {"action": "search_web", "value": "robots news"}
 
-User: What do you see right now?
-You: {"action": "capture_image", "value": "environment"}
-
 ### END EXAMPLES ###
 """
 
@@ -175,6 +174,8 @@ class BotGUI:
         self.tts_thread = None       
         self.tts_active = threading.Event()
         self.current_audio_process = None 
+
+        self.whisper_model = None
         
         # --- WAKE WORD INITIALIZATION ---
         print("[INIT] Loading Wake Word...", flush=True)
@@ -326,22 +327,14 @@ class BotGUI:
         speed = 50 if self.current_state == BotStates.SPEAKING else 500
         self.master.after(speed, self.update_animation)
 
-    def set_state(self, state, msg="", cam_path=None):
+    def set_state(self, state, msg=""):
         def _update():
             if msg: print(f"[STATE] {state.upper()}: {msg}", flush=True)
             if self.current_state != state:
                 self.current_state = state
                 self.current_frame_index = 0
             if msg: self.status_var.set(msg)
-            if cam_path and os.path.exists(cam_path) and state in [BotStates.THINKING, BotStates.SPEAKING]:
-                try:
-                    img = Image.open(cam_path).resize((self.OVERLAY_WIDTH, self.OVERLAY_HEIGHT))
-                    self.current_overlay_image = ImageTk.PhotoImage(img)
-                    self.overlay_label.config(image=self.current_overlay_image)
-                    self.overlay_label.place(x=200, y=90)
-                except: pass
-            else:
-                self.overlay_label.place_forget()
+            self.overlay_label.place_forget()
         self.master.after(0, _update)
 
     def append_to_text(self, text, newline=True):
@@ -374,12 +367,12 @@ class BotGUI:
         value = action_data.get("value") or action_data.get("query")
         
         VALID_TOOLS = {
-            "get_time", "search_web", "capture_image"
+            "get_time", "search_web"
         }
         
         ALIASES = {
             "google": "search_web", "browser": "search_web", "news": "search_web",         
-            "search_news": "search_web", "look": "capture_image", "see": "capture_image", 
+            "search_news": "search_web", 
             "check_time": "get_time"
         }
 
@@ -431,9 +424,6 @@ class BotGUI:
             except Exception as e:
                 print(f"[DEBUG] Connection/Library Error: {e}", flush=True)
                 return "SEARCH_ERROR"
-        
-        elif action == "capture_image":
-             return "IMAGE_CAPTURE_TRIGGERED"
 
         return None
 
@@ -474,7 +464,7 @@ class BotGUI:
                 
                 self.append_to_text(f"YOU: {user_text}")
                 self.interrupted.clear()
-                self.chat_and_respond(user_text, img_path=None)
+                self.chat_and_respond(user_text)
                     
         except Exception as e:
             traceback.print_exc()
@@ -486,6 +476,19 @@ class BotGUI:
             ollama.generate(model=TEXT_MODEL, prompt="", keep_alive=-1)
         except Exception as e:
             print(f"Failed to load {TEXT_MODEL}: {e}", flush=True)
+
+        """
+            https://github.com/SYSTRAN/faster-whisper/blob/ed9a06cd89a93e47838f564998a6c09b655d7f43/faster_whisper/transcribe.py#L639
+        model_size_or_path: Size of the model to use (tiny, tiny.en, base, base.en,
+            small, small.en, distil-small.en, medium, medium.en, distil-medium.en, large-v1,
+            large-v2, large-v3, large, distil-large-v2, distil-large-v3, large-v3-turbo, or turbo),
+            a path to a converted model directory, or a CTranslate2-converted Whisper model ID from
+            the HF Hub. When a size or a model ID is configured, the converted model is downloaded
+            from the Hugging Face Hub.
+            https://huggingface.co/Systran/faster-distil-whisper-small.en/tree/main
+        """
+        self.whisper_model = WhisperModel("./fastwhisper/", device="cpu", compute_type="int8")
+
         self.play_sound(self.get_random_sound(greeting_sounds_dir))
         print("Models loaded.", flush=True)
 
@@ -616,35 +619,28 @@ class BotGUI:
     def transcribe_audio(self, filename):
         print("Transcribing...", flush=True)
         try:
-            result = subprocess.run(
-                ["./whisper.cpp/build/bin/whisper-cli", "-m", "./whisper.cpp/models/ggml-base.en.bin", "-l", "en", "-t", "4", "-f", filename],
-                capture_output=True, text=True
-            )
-            transcription_lines = result.stdout.strip().split('\n')
-            if transcription_lines and transcription_lines[-1].strip():
-                last_line = transcription_lines[-1].strip()
-                if ']' in last_line: transcription = last_line.split("]")[1].strip()
-                else: transcription = last_line
-            else: transcription = ""
+            #result = subprocess.run(
+                #["./whisper.cpp/build/bin/whisper-cli", "-m", "./whisper.cpp/models/ggml-base.en.bin", "-l", "en", "-t", "4", "-f", filename],
+                #capture_output=True, text=True
+            #)
+            segments, info = self.whisper_model.transcribe(filename, beam_size=5, language="en", condition_on_previous_text=False)
+
+            #transcription_lines = result.stdout.strip().split('\n')
+            #if transcription_lines and transcription_lines[-1].strip():
+                #last_line = transcription_lines[-1].strip()
+                #if ']' in last_line: transcription = last_line.split("]")[1].strip()
+                #else: transcription = last_line
+            #else:
+                #transcription = ""
+            text_segments = []
+            for segment in segments:
+                text_segments.append(segment.text)
+            transcription = " ".join(text_segments)
             print(f"Heard: '{transcription}'", flush=True)
             return transcription.strip()
         except Exception as e:
             print(f"Transcription Error: {e}")
             return ""
-
-    def capture_image(self):
-        self.set_state(BotStates.CAPTURING, "Watching...")
-        try:
-            subprocess.run(["rpicam-still", "-t", "500", "-n", "--width", "640", "--height", "480", "-o", BMO_IMAGE_FILE], check=True)
-            rotation = CURRENT_CONFIG.get("camera_rotation", 0)
-            if rotation != 0:
-                img = Image.open(BMO_IMAGE_FILE)
-                img = img.rotate(rotation, expand=True) 
-                img.save(BMO_IMAGE_FILE)
-            return BMO_IMAGE_FILE
-        except Exception as e:
-            print(f"Camera Error: {e}")
-            return None
 
     # =========================================================================
     # 5. CHAT & RESPOND
@@ -660,15 +656,15 @@ class BotGUI:
             self.set_state(BotStates.IDLE, "Memory Wiped")
             return
 
-        model_to_use = VISION_MODEL if img_path else TEXT_MODEL
-        self.set_state(BotStates.THINKING, "Thinking...", cam_path=img_path)
+        model_to_use = TEXT_MODEL
+        self.set_state(BotStates.THINKING, "Thinking...")
         
         messages = []
-        if img_path:
-            messages = [{"role": "user", "content": text, "images": [img_path]}]
-        else:
-            user_msg = {"role": "user", "content": text}
-            messages = self.permanent_memory + self.session_memory + [user_msg]
+
+        user_msg = {"role": "user", "content": text}
+        messages = self.permanent_memory + self.session_memory + [user_msg]
+        #TODO: should also remember user's message?
+        #self.session_memory.append()
         
         self.thinking_sound_active.set()
         threading.Thread(target=self._run_thinking_sound_loop, daemon=True).start()
@@ -695,7 +691,7 @@ class BotGUI:
 
                 self.thinking_sound_active.clear()
                 if self.current_state != BotStates.SPEAKING:
-                    self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                    self.set_state(BotStates.SPEAKING, "Speaking...")
                     self.append_to_text("BOT: ", newline=False)
 
                 self._stream_to_text(content)
@@ -715,7 +711,7 @@ class BotGUI:
                     if tool_result and tool_result.startswith("CHAT_FALLBACK::"):
                         chat_text = tool_result.split("::", 1)[1]
                         self.thinking_sound_active.clear()
-                        self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         self.append_to_text("BOT: ", newline=False)
                         self.append_to_text(chat_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(chat_text)
@@ -724,16 +720,10 @@ class BotGUI:
                         self.set_state(BotStates.IDLE, "Ready")
                         return
 
-                    if tool_result == "IMAGE_CAPTURE_TRIGGERED":
-                        new_img_path = self.capture_image()
-                        if new_img_path:
-                            self.chat_and_respond(text, img_path=new_img_path)
-                            return 
-
-                    elif tool_result == "INVALID_ACTION":
+                    if tool_result == "INVALID_ACTION":
                         fallback_text = "I am not sure how to do that."
                         self.thinking_sound_active.clear()
-                        self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         self.append_to_text("BOT: ", newline=False)
                         self.append_to_text(fallback_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(fallback_text)
@@ -741,7 +731,7 @@ class BotGUI:
                     elif tool_result == "SEARCH_EMPTY":
                         fallback_text = "I searched, but I couldn't find any news about that."
                         self.thinking_sound_active.clear()
-                        self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         self.append_to_text("BOT: ", newline=False)
                         self.append_to_text(fallback_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(fallback_text)
@@ -749,7 +739,7 @@ class BotGUI:
                     elif tool_result == "SEARCH_ERROR":
                         fallback_text = "I cannot reach the internet right now."
                         self.thinking_sound_active.clear()
-                        self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         self.append_to_text("BOT: ", newline=False)
                         self.append_to_text(fallback_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(fallback_text)
@@ -767,15 +757,15 @@ class BotGUI:
                         final_text = final_resp['message']['content']
                         
                         self.thinking_sound_active.clear()
-                        self.set_state(BotStates.SPEAKING, "Speaking...", cam_path=img_path)
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         
                         self.append_to_text("BOT: ", newline=False)
                         self.append_to_text(final_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(final_text)
-                        self.session_memory.append({"role": "assistant", "content": final_text})
+                        self.session_memory.append({"role": "assistant", "content": demoji.replace(final_text)})
             else:
                 self.append_to_text("")
-                self.session_memory.append({"role": "assistant", "content": full_response_buffer}) 
+                self.session_memory.append({"role": "assistant", "content": demoji.replace(full_response_buffer, "")}) 
             
             self.wait_for_tts()
             self.set_state(BotStates.IDLE, "Ready")
