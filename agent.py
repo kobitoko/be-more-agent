@@ -139,15 +139,22 @@ error_sounds_dir = "sounds/error_sounds"
 # =========================================================================
 
 class BotGUI:
-    BG_WIDTH, BG_HEIGHT = 800, 480 
-    OVERLAY_WIDTH, OVERLAY_HEIGHT = 400, 300 
 
     def __init__(self, master):
         self.master = master
         master.title("Pi Assistant")
         master.attributes('-fullscreen', True) 
         master.bind('<Escape>', self.exit_fullscreen)
-        
+
+        # Force the geometry manager so the correct screen width & height is set up.
+        master.update()
+        geometry = master.winfo_geometry()
+        print(geometry)
+
+        # Get screen's dimesion
+        self.BG_WIDTH = master.winfo_width()
+        self.BG_HEIGHT = master.winfo_height()
+
         # Inputs
         master.bind('<Return>', self.handle_ptt_toggle)
         master.bind('<space>', self.handle_speaking_interrupt)
@@ -178,16 +185,23 @@ class BotGUI:
         self.whisper_model = None
         
         # --- WAKE WORD INITIALIZATION ---
-        print("[INIT] Loading Wake Word...", flush=True)
+        print(f"[INIT] Loading Wake Word... {WAKE_WORD_MODEL}", flush=True)
         self.oww_model = None
+
+        # download_models fixes this error:
+        # [CRITICAL] Failed to load model: [ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from ./venv/lib/python3.11/site-packages/openwakeword/resources/models/melspectrogram.onnx
+        # Error popped up: PermissionError: [Errno 13] Permission denied: './venv/lib/python3.11/site-packages/openwakeword/resources'
+        # to fix that do a `sudo chmod -R a+rwx ./venv/lib/python3.11/site-packages/openwakeword`
+        openwakeword.utils.download_models()
+
         if os.path.exists(WAKE_WORD_MODEL):
             try:
-                self.oww_model = Model(wakeword_model_paths=[WAKE_WORD_MODEL])
-                print("[INIT] Wake Word Loaded.", flush=True)
+                self.oww_model = Model(wakeword_models=[WAKE_WORD_MODEL], inference_framework="onnx")
+                print("[INIT] Wake Word Loaded (New API).", flush=True)
             except TypeError:
                 try:
-                    self.oww_model = Model(wakeword_models=[WAKE_WORD_MODEL])
-                    print("[INIT] Wake Word Loaded (New API).", flush=True)
+                    self.oww_model = Model(wakeword_model_paths=[WAKE_WORD_MODEL], inference_framework="onnx")
+                    print("[INIT] Wake Word Loaded (Old API).", flush=True)
                 except Exception as e:
                     print(f"[CRITICAL] Failed to load model: {e}")
             except Exception as e:
@@ -457,7 +471,11 @@ class BotGUI:
                     self.set_state(BotStates.IDLE, "Heard nothing.")
                     continue
                 
+                start_time = time.perf_counter()
                 user_text = self.transcribe_audio(audio_file)
+                end_time = time.perf_counter() - start_time
+                print(f"whisper took {end_time:.3f} seconds.")
+                
                 if not user_text:
                     self.set_state(BotStates.IDLE, "Transcription empty.")
                     continue
