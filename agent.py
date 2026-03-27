@@ -79,6 +79,8 @@ OLLAMA_OPTIONS = {
     'top_p': 0.9
 }
 
+USE_WHISPER_CLI = True
+
 def load_config():
     config = DEFAULT_CONFIG.copy()
     if os.path.exists(CONFIG_FILE):
@@ -472,9 +474,11 @@ class BotGUI:
                     continue
                 
                 start_time = time.perf_counter()
+                
                 user_text = self.transcribe_audio(audio_file)
+                
                 end_time = time.perf_counter() - start_time
-                print(f"whisper took {end_time:.3f} seconds.")
+                print(f"Transcription took {end_time:.3f} seconds.")
                 
                 if not user_text:
                     self.set_state(BotStates.IDLE, "Transcription empty.")
@@ -505,7 +509,8 @@ class BotGUI:
             from the Hugging Face Hub.
             https://huggingface.co/Systran/faster-distil-whisper-small.en/tree/main
         """
-        self.whisper_model = WhisperModel("./fastwhisper/", device="cpu", compute_type="int8")
+        if not USE_WHISPER_CLI:
+            self.whisper_model = WhisperModel("./fastwhisper/", device="cpu", compute_type="int8")
 
         self.play_sound(self.get_random_sound(greeting_sounds_dir))
         print("Models loaded.", flush=True)
@@ -637,23 +642,28 @@ class BotGUI:
     def transcribe_audio(self, filename):
         print("Transcribing...", flush=True)
         try:
-            #result = subprocess.run(
-                #["./whisper.cpp/build/bin/whisper-cli", "-m", "./whisper.cpp/models/ggml-base.en.bin", "-l", "en", "-t", "4", "-f", filename],
-                #capture_output=True, text=True
-            #)
-            segments, info = self.whisper_model.transcribe(filename, beam_size=5, language="en", condition_on_previous_text=False)
+            transcription = ""
 
-            #transcription_lines = result.stdout.strip().split('\n')
-            #if transcription_lines and transcription_lines[-1].strip():
-                #last_line = transcription_lines[-1].strip()
-                #if ']' in last_line: transcription = last_line.split("]")[1].strip()
-                #else: transcription = last_line
-            #else:
-                #transcription = ""
-            text_segments = []
-            for segment in segments:
-                text_segments.append(segment.text)
-            transcription = " ".join(text_segments)
+            if USE_WHISPER_CLI:
+                result = subprocess.run(
+                    ["./whisper.cpp/build/bin/whisper-cli", "-m", "./whisper.cpp/models/ggml-tiny.en.bin", "-l", "en", "-t", "4", "-f", filename],
+                    capture_output=True, text=True
+                )
+
+                transcription_lines = result.stdout.strip().split('\n')
+                if transcription_lines and transcription_lines[-1].strip():
+                    last_line = transcription_lines[-1].strip()
+                    if ']' in last_line: transcription = last_line.split("]")[1].strip()
+                    else: transcription = last_line
+                else:
+                    transcription = ""
+            else:
+                segments, info = self.whisper_model.transcribe(filename, beam_size=5, language="en", condition_on_previous_text=False)
+                text_segments = []
+                for segment in segments:
+                    text_segments.append(segment.text)
+                transcription = " ".join(text_segments)
+
             print(f"Heard: '{transcription}'", flush=True)
             return transcription.strip()
         except Exception as e:

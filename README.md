@@ -78,12 +78,27 @@ ollama pull moondream
 
 ### 3. Clone & Setup
 ```bash
-git clone https://github.com/brenpoly/be-more-agent.git
+git clone --recursive https://github.com/kobitoko/be-more-agent.git
 cd be-more-agent
 chmod +x setup.sh
 ./setup.sh
 ```
 *The setup script will install system libraries, create necessary folders, download Piper TTS, and set up the Python virtual environment.*
+
+Building whisper.cpp:
+```bash
+cd whisper.cpp
+cmake -B build
+cmake --build build -j --config Release
+```
+Download whisper's model:
+```bash
+make -j tiny.en
+```
+To make it even smaller and quantize it:
+```bash
+./build/bin/whisper-quantize models/ggml-tiny.en.bin models/ggml-tiny.en-q5_0.bin q5_0
+```
 
 ### 4. Configure the Wake Word
 The setup script downloads a default wake word ("Hey Jarvis"). To use your own:
@@ -92,6 +107,7 @@ The setup script downloads a default wake word ("Hey Jarvis"). To use your own:
 3. Rename it to `wakeword.onnx`.
 
 ### 5. Run the Agent
+Tested with Python 3.11.2
 ```bash
 source venv/bin/activate
 python agent.py
