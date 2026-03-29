@@ -150,9 +150,10 @@ When you run the `setup.sh` script, it will automatically download the compiled 
 1. Download `bmo.onnx` and `bmo.onnx.json` from the [Latest Release](https://github.com/brenpoly/be-more-agent/releases).
 2. Create a folder named `voices/` in the root directory of this repository.
 3. Place both downloaded files inside the `voices/` folder.
-4. Ensure your `config.json` file points to the new model:
+4. Rename them to `bmo-custom.onnx` and `bmo-custom.onnx.json`
+5. Ensure your `config.json` file points to the new model:
    ```json
-   "voice_model": "voices/bmo.onnx"
+   "voice_model": "voices/bmo-custom.onnx"
 ---
 
 ## ⚠️ Troubleshooting

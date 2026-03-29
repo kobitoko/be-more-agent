@@ -32,6 +32,7 @@ import struct
 import demoji
 import logging
 from logging.handlers import RotatingFileHandler
+import piper
 
 # Suppress harmless library warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
@@ -151,6 +152,10 @@ if INPUT_DEVICE_NAME is not None:
         log.info(f"[AUDIO] Using input device: {device_info.get('name', INPUT_DEVICE_NAME)}")
     except Exception:
         log.error(f"[AUDIO] Using input device index: {INPUT_DEVICE_NAME}")
+else:
+    log.warning("[AUDIO] Input Device Name is NONE")
+    devices_info = sd.query_devices()
+    log.info(f"[AUDIO DEBUG] Devices Info:\n{devices_info}")
 
 def choose_input_samplerate(device, preferred=None):
     candidates = []
@@ -1003,16 +1008,23 @@ class BotGUI:
         log.info(f"[PIPER SPEAKING] '{clean}'")
         voice_model = CURRENT_CONFIG.get("voice_model", "piper/en_GB-semaine-medium.onnx")
         
+
+
         try:
-            self.current_audio_process = subprocess.Popen(
-                ["./piper/piper", "--model", voice_model, "--output-raw"], 
-                stdin=subprocess.PIPE, 
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
-            )
+            voice = piper.PiperVoice.load(voice_model)
+            # for chunk in voice.synthesize(text):
+            #     set_audio_format(chunk.sample_rate, chunk.sample_width, chunk.sample_channels)
+            #     write_raw_data(chunk.audio_int16_bytes)
+        
+            # self.current_audio_process = subprocess.Popen(
+            #     ["./piper/piper", "--model", voice_model, "--output-raw"], 
+            #     stdin=subprocess.PIPE, 
+            #     stdout=subprocess.PIPE,
+            #     stderr=subprocess.DEVNULL
+            # )
             
-            self.current_audio_process.stdin.write(clean.encode() + b'\n')
-            self.current_audio_process.stdin.close() 
+            # self.current_audio_process.stdin.write(clean.encode() + b'\n')
+            # self.current_audio_process.stdin.close() 
 
             try:
                 device_info = sd.query_devices(kind='output')
@@ -1031,20 +1043,39 @@ class BotGUI:
             with sd.RawOutputStream(samplerate=native_rate if use_native_rate else PIPER_RATE, 
                                     channels=1, dtype='int16', 
                                     device=None, latency='low', blocksize=2048) as stream:
-                while True:
-                    if self.interrupted.is_set(): break
-                    data = self.current_audio_process.stdout.read(4096)
-                    if not data: break 
-                    
-                    audio_chunk = np.frombuffer(data, dtype=np.int16)
-                    if len(audio_chunk) > 0:
-                        self.current_volume = np.max(np.abs(audio_chunk))
-                        if use_native_rate:
-                            num_samples = int(len(audio_chunk) * (native_rate / PIPER_RATE))
-                            audio_chunk = scipy.signal.resample(audio_chunk, num_samples).astype(np.int16)
-                        stream.write(audio_chunk.tobytes())
-                    else:
-                        self.current_volume = 0
+                syn_config = piper.SynthesisConfig(
+                    volume=1,  # loudness
+                    length_scale=1,  # speed
+                    noise_scale=1.0,  # more audio variation
+                    noise_w_scale=1.0,  # more speaking variation
+                    normalize_audio=False, # use raw audio from voice
+                )
+                for audio_bytes in voice.synthesize(text):
+                    #int_data = np.frombuffer(audio_bytes, dtype=np.int16)
+
+                    #if len(audio_bytes.audio_int16_bytes) > 0:
+                        #self.current_volume = np.max(np.abs(audio_bytes.audio_int16_bytes))
+                        stream.write(audio_bytes.audio_int16_bytes)
+                        # if use_native_rate:
+                        #     num_samples = int(len(int_data) * (native_rate / PIPER_RATE))
+                        #     int_data = scipy.signal.resample(int_data, num_samples).astype(np.int16)
+                        # stream.write(int_data.tobytes())
+                    #else:
+                        #self.current_volume = 0
+
+                # while True:
+                #     if self.interrupted.is_set(): break
+                #     data = self.current_audio_process.stdout.read(4096)
+                #     if not data: break 
+                #     audio_chunk = np.frombuffer(data, dtype=np.int16)
+                #     if len(audio_chunk) > 0:
+                #         self.current_volume = np.max(np.abs(audio_chunk))
+                #         if use_native_rate:
+                #             num_samples = int(len(audio_chunk) * (native_rate / PIPER_RATE))
+                #             audio_chunk = scipy.signal.resample(audio_chunk, num_samples).astype(np.int16)
+                #         stream.write(audio_chunk.tobytes())
+                #     else:
+                #         self.current_volume = 0
                 time.sleep(0.5) 
                     
         except Exception as e:

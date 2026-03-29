@@ -9,3 +9,4 @@ Pillow
 ddgs
 faster-whisper
 demoji
+piper-tts
