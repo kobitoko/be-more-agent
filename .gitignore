@@ -38,6 +38,7 @@ chat_memory.json
 *.mp3
 *.jpg
 *.png
+*.log
 camera_capture.jpg
 current_image.jpg
 test_audio.wav
