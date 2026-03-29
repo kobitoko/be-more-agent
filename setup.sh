@@ -11,13 +11,12 @@ echo -e "${GREEN}🤖 Pi Local Assistant Setup Script${NC}"
 # 1. Install System Dependencies (The "Hidden" Requirements)
 echo -e "${YELLOW}[1/6] Installing System Tools (apt)...${NC}"
 sudo apt update
-#sudo apt install -y python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng git
-# Thanks moorew https://github.com/brenpoly/be-more-agent/pull/3
 sudo apt install -y python3-tk python3-dev libasound2-dev portaudio19-dev liblapack-dev libblas-dev cmake build-essential espeak-ng git
 
 # 2. Create Folders
 echo -e "${YELLOW}[2/6] Creating Folders...${NC}"
 mkdir -p piper
+mkdir -p voices # Added for custom BMO models
 mkdir -p sounds/greeting_sounds
 mkdir -p sounds/thinking_sounds
 mkdir -p sounds/ack_sounds
@@ -41,12 +40,18 @@ else
     echo -e "${RED}⚠️  Not on Raspberry Pi (aarch64). Skipping Piper download.${NC}"
 fi
 
-# 4. Download Voice Model
-echo -e "${YELLOW}[4/6] Downloading Voice Model...${NC}"
+# 4. Download Voice Models
+echo -e "${YELLOW}[4/6] Downloading Voice Models...${NC}"
+# Download default Piper voice as fallback
 cd piper
 wget -nc -O en_GB-semaine-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx
 wget -nc -O en_GB-semaine-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json
 cd ..
+
+# Download Custom BMO Voice
+echo -e "${YELLOW}Downloading custom BMO voice...${NC}"
+curl -L -o voices/bmo-custom.onnx "https://github.com/brenpoly/be-more-agent/releases/latest/download/bmo.onnx"
+curl -L -o voices/bmo-custom.onnx.json "https://github.com/brenpoly/be-more-agent/releases/latest/download/bmo.onnx.json"
 
 # 5. Install Python Libraries
 echo -e "${YELLOW}[5/6] Installing Python Libraries...${NC}"
@@ -56,6 +61,7 @@ if [ ! -d "venv" ]; then
 fi
 source venv/bin/activate
 pip install --upgrade pip
+# Force rebuild sounddevice to link against the newly installed PortAudio dev libraries
 pip install --force-reinstall --no-cache-dir sounddevice
 pip install -r requirements.txt
 
