@@ -12,6 +12,7 @@ venv/
 # Ignore the Piper TTS folder (it's huge and OS-specific)
 piper/
 fastwhisper/
+voices/
 
 # Ignore large model files
 *.onnx
@@ -20,6 +21,8 @@ fastwhisper/
 
 # Exception: Un-comment the line below if you WANT to share your custom wake word
 # !wakeword.onnx
+# Empty file placeholder to track folders
+!**/.gitkeep
 
 # --- User Configuration & Memory ---
 # Keep chat history local (Privacy)
