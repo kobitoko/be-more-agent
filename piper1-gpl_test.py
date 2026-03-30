@@ -1,6 +1,7 @@
 import piper
 import sounddevice as sd
 import time
+import wave
 
 # Testing piper-tts Feb 5 2026 v1.4.1 https://github.com/OHF-Voice/piper1-gpl
 
@@ -20,17 +21,24 @@ if __name__ == "__main__":
         PIPER_RATE = 22050
         print(f"Default Sample Rate: {device_info['default_samplerate']} Hz PIPER_RATE {PIPER_RATE}")
 
-        with sd.RawOutputStream(samplerate=PIPER_RATE, 
-                                 channels=1, dtype='int16', 
-                                 device=None, latency='low', blocksize=2048) as stream:
-        #with sd.RawOutputStream(samplerate=PIPER_RATE, channels=1, dtype='int16') as stream:
-            syn_config = piper.SynthesisConfig(
+        syn_config = piper.SynthesisConfig(
                 volume=1,  # loudness
                 length_scale=1,  # speed
                 noise_scale=1.0,  # more audio variation
                 noise_w_scale=1.0,  # more speaking variation
                 normalize_audio=False, # use raw audio from voice
             )
+
+        start_time = time.perf_counter()
+        with wave.open("test.wav", "wb") as wav_file:
+            voice.synthesize_wav("Hello there! This is a test, hahaha!", wav_file=wav_file, syn_config=syn_config)
+        end_time = time.perf_counter() - start_time
+        print(f"PiperVoice synthesize save to wav took {end_time:.3f} seconds.")
+
+        with sd.RawOutputStream(samplerate=PIPER_RATE, 
+                                 channels=1, dtype='int16', 
+                                 device=None, latency='low', blocksize=2048) as stream:
+        #with sd.RawOutputStream(samplerate=PIPER_RATE, channels=1, dtype='int16') as stream:
             start_time = time.perf_counter()
             for audio_bytes in voice.synthesize("Hello there! This is a test, hahaha!", syn_config):
                 stream.write(audio_bytes.audio_int16_bytes)

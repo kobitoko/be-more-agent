@@ -77,7 +77,7 @@ DEFAULT_CONFIG = {
 
 # LLM SETTINGS
 OLLAMA_OPTIONS = {
-    'keep_alive': '-1',     
+    'keep_alive': '-1', # keep the model loaded in memory     
     'num_thread': 4,
     'temperature': 0.7,     
     'top_k': 40,
@@ -194,12 +194,12 @@ class BotStates:
     WARMUP = "warmup"       
 
 # --- SYSTEM PROMPT ---
-BASE_SYSTEM_PROMPT = """You are a helpful robot assistant running on a Raspberry Pi.
+BASE_SYSTEM_PROMPT = """You are a helpful robot assistant named BMO, running on a Raspberry Pi.
 Personality: Cute, helpful, robot.
 Style: Short sentences. Enthusiastic.
 
 INSTRUCTIONS:
-- If the user asks for a physical action (time, search, photo), output JSON.
+- If the user asks for a physical action (time, search), output JSON.
 - If the user just wants to chat, reply with NORMAL TEXT.
 
 ### EXAMPLES ###
@@ -609,6 +609,15 @@ class BotGUI:
         if not USE_WHISPER_CLI:
             self.whisper_model = WhisperModel("./fastwhisper/", device="cpu", compute_type="int8")
 
+        try:
+            start_time = time.perf_counter()
+            voice_model = CURRENT_CONFIG.get("voice_model", "piper/en_GB-semaine-medium.onnx")
+            self.voice = piper.PiperVoice.load(voice_model)
+            end_time = time.perf_counter() - start_time
+            log.info(f"PiperVoice loading took {end_time:.3f} seconds.")
+        except Exception as e:
+            log.error(f"Audio Error: {e}")
+
         self.play_sound(self.get_random_sound(greeting_sounds_dir))
         log.info("Models loaded.")
 
@@ -883,16 +892,23 @@ class BotGUI:
         sentence_buffer = "" 
         
         try:
+            #stream = ollama.chat(model=model_to_use, messages=messages, stream=True, options=OLLAMA_OPTIONS, think='medium')
             stream = ollama.chat(model=model_to_use, messages=messages, stream=True, options=OLLAMA_OPTIONS)
-            
+
             is_action_mode = False
-            
+
+            start_time = time.perf_counter()
+            log.info("ollama stream")
             for chunk in stream:
                 if self.interrupted.is_set(): break 
                 content = chunk['message']['content']
+                
+                #log.info(f" - \"{content}\"") #debug
+
                 full_response_buffer += content
                 
                 if '{"' in content or "action:" in content.lower():
+                    log.info(f" - Action Mode activated by \"{content}\"")
                     is_action_mode = True
                     self.thinking_sound_active.clear()
                     continue 
@@ -912,8 +928,11 @@ class BotGUI:
                     if clean_sentence and re.search(r'[a-zA-Z0-9]', clean_sentence):
                         with self.tts_queue_lock: self.tts_queue.append(clean_sentence)
                     sentence_buffer = ""
+            end_time = time.perf_counter() - start_time
+            log.info(f"ollama streaming completed. Took {end_time:.3f} seconds.")
 
             if is_action_mode:
+                start_time = time.perf_counter()
                 action_data = self.extract_json_from_text(full_response_buffer)
                 if action_data:
                     tool_result = self.execute_action_and_get_result(action_data)
@@ -973,6 +992,9 @@ class BotGUI:
                         self.append_to_text(final_text, newline=True)
                         with self.tts_queue_lock: self.tts_queue.append(final_text)
                         self.session_memory.append({"role": "assistant", "content": demoji.replace(final_text)})
+
+                end_time = time.perf_counter() - start_time
+                log.info(f"action mode completed. Took {end_time:.3f} seconds.")
             else:
                 self.append_to_text("")
                 self.session_memory.append({"role": "assistant", "content": demoji.replace(full_response_buffer, "")}) 
@@ -1004,28 +1026,10 @@ class BotGUI:
     def speak(self, text):
         clean = re.sub(r"[^\w\s,.!?:-]", "", text)
         if not clean.strip(): return
-        
+        if self.voice is None: return
         log.info(f"[PIPER SPEAKING] '{clean}'")
-        voice_model = CURRENT_CONFIG.get("voice_model", "piper/en_GB-semaine-medium.onnx")
-        
-
 
         try:
-            voice = piper.PiperVoice.load(voice_model)
-            # for chunk in voice.synthesize(text):
-            #     set_audio_format(chunk.sample_rate, chunk.sample_width, chunk.sample_channels)
-            #     write_raw_data(chunk.audio_int16_bytes)
-        
-            # self.current_audio_process = subprocess.Popen(
-            #     ["./piper/piper", "--model", voice_model, "--output-raw"], 
-            #     stdin=subprocess.PIPE, 
-            #     stdout=subprocess.PIPE,
-            #     stderr=subprocess.DEVNULL
-            # )
-            
-            # self.current_audio_process.stdin.write(clean.encode() + b'\n')
-            # self.current_audio_process.stdin.close() 
-
             try:
                 device_info = sd.query_devices(kind='output')
                 native_rate = int(device_info['default_samplerate'])
@@ -1034,7 +1038,7 @@ class BotGUI:
 
             PIPER_RATE = 22050
             use_native_rate = False
-            
+
             try:
                 sd.check_output_settings(device=None, samplerate=PIPER_RATE)
             except:
@@ -1043,6 +1047,7 @@ class BotGUI:
             with sd.RawOutputStream(samplerate=native_rate if use_native_rate else PIPER_RATE, 
                                     channels=1, dtype='int16', 
                                     device=None, latency='low', blocksize=2048) as stream:
+
                 syn_config = piper.SynthesisConfig(
                     volume=1,  # loudness
                     length_scale=1,  # speed
@@ -1050,32 +1055,13 @@ class BotGUI:
                     noise_w_scale=1.0,  # more speaking variation
                     normalize_audio=False, # use raw audio from voice
                 )
-                for audio_bytes in voice.synthesize(text):
-                    #int_data = np.frombuffer(audio_bytes, dtype=np.int16)
+                start_time = time.perf_counter()
+                for audio_bytes in self.voice.synthesize(text, syn_config):
+                    if self.interrupted.is_set(): break
+                    stream.write(audio_bytes.audio_int16_bytes)
+                end_time = time.perf_counter() - start_time
+                log.info(f"PiperVoice synthesize took {end_time:.3f} seconds.")
 
-                    #if len(audio_bytes.audio_int16_bytes) > 0:
-                        #self.current_volume = np.max(np.abs(audio_bytes.audio_int16_bytes))
-                        stream.write(audio_bytes.audio_int16_bytes)
-                        # if use_native_rate:
-                        #     num_samples = int(len(int_data) * (native_rate / PIPER_RATE))
-                        #     int_data = scipy.signal.resample(int_data, num_samples).astype(np.int16)
-                        # stream.write(int_data.tobytes())
-                    #else:
-                        #self.current_volume = 0
-
-                # while True:
-                #     if self.interrupted.is_set(): break
-                #     data = self.current_audio_process.stdout.read(4096)
-                #     if not data: break 
-                #     audio_chunk = np.frombuffer(data, dtype=np.int16)
-                #     if len(audio_chunk) > 0:
-                #         self.current_volume = np.max(np.abs(audio_chunk))
-                #         if use_native_rate:
-                #             num_samples = int(len(audio_chunk) * (native_rate / PIPER_RATE))
-                #             audio_chunk = scipy.signal.resample(audio_chunk, num_samples).astype(np.int16)
-                #         stream.write(audio_chunk.tobytes())
-                #     else:
-                #         self.current_volume = 0
                 time.sleep(0.5) 
                     
         except Exception as e:

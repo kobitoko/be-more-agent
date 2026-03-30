@@ -129,6 +129,12 @@ You can modify the hardware behavior and personality in `config.json`. The `agen
     "system_prompt_extras": "You are a helpful robot assistant. Keep responses short and cute."
 }
 ```
+`text_model` can be like:   
+`"qwen3.5:0.8b"`  
+`"gemma3:270m"`  
+`"gemma3:1b"`  
+`"smollm2:1.7b"`  
+`"hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF"`  
 
 ---
 
